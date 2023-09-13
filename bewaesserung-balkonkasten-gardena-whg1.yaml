@@ -1,0 +1,206 @@
+###############
+substitutions:
+    devicename: bewaesserung-balkonkasten-whg1
+    upper_devicename: BEWAESSERUG-BALKONKASTEN-GARDENA-WHG1
+    friendly_name: Balkon-Bewaesserung
+    device_description: Bewaesserung des Balkons aus dem Balkonkasten
+    mqtt_prefix: Bewaesserung_01
+##############
+  
+  
+esphome:
+    name: $devicename
+    comment: ${device_description}
+    platform: ESP32
+    board: m5stack-atom
+    on_boot:
+      - mqtt.publish:
+          topic: $mqtt_prefix/info/protocol
+          payload: ESPHome
+  
+external_components:
+  - source:
+      type: git
+      url: https://github.com/chill-Division/M5Stack-ESPHome/
+      ref: main
+    components: sonic_i2c
+  
+  #packages: # These allow merging whereas global includes do not
+  #  common_sensors: !include /config/esphome/custom_components/common_sensors.yaml # Includes number, text and binary
+  
+  
+  # Enable logging
+logger:
+    level: info
+  
+web_server: 
+    port: 80
+
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_ip
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+
+  birth_message:
+     topic: $mqtt_prefix
+     payload: Online
+     retain: true
+  
+  will_message:
+      topic: $mqtt_prefix
+      payload: Offline
+      retain: true
+  
+  shutdown_message:
+     topic: $mqtt_prefix
+     payload: Shutdown
+     retain: true
+  
+time:
+    - platform: sntp
+      id: sntp_time
+      timezone: Europe/Berlin
+  
+sun: # https://esphome.io/components/sun.html
+    latitude: 52.383124 
+    longitude: 13.421259
+  
+    on_sunrise:
+      - then:
+          - logger.log: Good morning!
+      # Custom elevation, will be called shortly after the trigger above.
+      - elevation: 5°
+        then:
+          - logger.log: Good morning 2!
+  
+    on_sunset:
+      - then:
+          - logger.log: Good evening!
+  
+  # Enable Home Assistant API
+
+api:
+    encryption:
+      key: !secret api_password
+  
+ota:
+  password: !secret ota_password
+  safe_mode: true
+  
+wifi:
+    ssid: !secret wifi_ssid
+    password: !secret wifi_password
+    fast_connect: true
+  
+    ap:
+      ssid: "Bewaesserung Fallback Hotspot"
+      password: "cjjnAykk8TbE"
+  
+    manual_ip:
+      static_ip: 192.168.1.45
+      gateway: 192.168.1.1
+      subnet: 255.255.255.0
+
+i2c:
+  sda: 26
+  scl: 32
+  scan: true
+  id: bus_1
+
+captive_portal:
+
+############################################################
+
+# Configuration of M5 Atom Lite onboard RGB LED    
+light:
+  - platform: neopixelbus
+    type: GRB
+    variant: SK6812
+    pin: GPIO27
+    num_leds: 1
+    name: ${friendly_name} Light
+    id: status_led
+    default_transition_length: 0s
+    color_correct: [0%, 100%, 0%]
+    restore_mode: ALWAYS_OFF
+
+globals:
+    - id: distance
+      type: float
+      restore_value: false
+      initial_value: '999'  # startet mit 0
+
+
+
+############################################################
+#### Distance Sensor Configuration ##########################
+#############################################################
+sensor:
+
+#- platform: template
+#  name: fuellstand_balkonkasten_prozent
+#  id: fuellstand_prozent
+#  icon: 'mdi:water-percent'
+#  unit_of_measurement: '%'
+
+#- platform: template
+#  name: distanz_wasserlevel_mm
+#  id: distanz
+#  icon: 'mdi:water-percent'
+#  unit_of_measurement: 'mm'
+
+# Uptime sensor.
+- platform: uptime
+  name: $friendly_name Uptime
+
+# Ultrasonic Distance Sensor
+- platform: sonic_i2c
+  name: "Ultrsonic"
+  i2c_id: bus_1
+  address: 0x57
+  id: ultrasonic1
+  unit_of_measurement: "mm"
+  device_class: distance
+  update_interval: 1s
+#  on_value:
+#    then:
+#      - logger.log: "value received"
+#      - lambda: id(ultrasonic1) = distance;
+#      - lambda: id(ultrasonic1).publish_state(distance);
+# Example configuration entry
+ 
+
+- platform: template
+  name: "Distance"
+  device_class: distance 
+  unit_of_measurement: "mm"
+  state_class: measurement
+  icon: "mdi:fire"
+  accuracy_decimals: 2
+  lambda: |-
+    return id(ultrasonic1).state; 
+  filters:
+    - median:
+        window_size: 5
+        send_every: 1
+        send_first_at: 1
+
+- platform: template
+  name: "Rohwert"
+  lambda: |-
+    return id(ultrasonic1).state;
+
+  update_interval: 5s
+
+binary_sensor:
+  # Configuration of M5 Atom Lite onboard Button to toggle onboard LED light
+  - platform: gpio
+    pin:
+      number: GPIO39
+      inverted: true
+    name: Button
+    on_press:
+      then:
+        - light.toggle: status_led
+        - logger.log: Button Pressed
